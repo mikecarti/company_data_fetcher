@@ -1,0 +1,51 @@
+xlsx_read_file: "checko.xlsx"
+
+out_file:
+  xlsx_write_file: "checko.xlsx"
+  fields: 
+    filter: "Отбор"
+    city_match: "Город совпадает"
+    name: "Название"
+    ogrn: "ОГРН"
+    inn: "ИНН"
+    kpp: "КПП"
+    shortname: "НаимСокр"
+    fullname: "НаимПолн"
+    regdate: "ДатаРег"
+    status: "Статус"
+    region: "РегионКод"
+    address: "ЮрАдрес"
+    okved: "ОКВЭД"
+
+out_inn_file:
+  xlsx_inn_write_file: "checko.xlsx"
+  fields:
+    inn: "ИНН"
+    managing_organization_inn: "УпрОрг ИНН"
+    managing_organization_full_name: "УпрОрг НаимПолн"
+    auth_capital_amount: "УстКап Сумма"
+    ceo_title: "Руковод"
+    phone_number: "Контакты Телефон"
+    email_address: "Контакты email"
+    website: "Контакты ВебСайт"
+    average_headcount: "СЧР"
+    today_request_count: "this_key_requests"
+
+api_keys: 
+  - "C1PcGrZ8emk132U6"
+  - "zlke2t67zz5pdjtA"
+  - "KpAn7TIegaDcBbOM"
+  - "zr0twtRIPc87Jx1P"
+  - "1CUvaDURDE5IjWz5"
+  - "1lCI9OMxgoK3C3cc"
+  - "FcrVXktJN15CFRsb"
+  - "hzvCaZBZFK9biWQo"
+  - "f6jHhCFKPIrhEvdu"
+  - "zfhfPPgYWq4SZBUA"
+  - "G0MXVZRpkKmHSZxf"
+  - "1CEIl0crWoTxxKzC"
+  - "KpOF72aqQIXcWFtT"
+  - "2tmL8PDqHekwJen2"
+
+
+company_limit: 0
