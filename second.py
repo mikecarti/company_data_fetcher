@@ -9,15 +9,55 @@ import pandas as pd
 import first
 
 BASE_DIR = os.path.normpath(os.getcwd())
+BUFFER_PATH = 'buffer.csv'
 SECOND_SHEET = "Все Данные с API"
 MAX_REQUEST_PER_KEY = 99
 
 
-def need_to_find_inn(table_height: int, ws):
-    return str(ws['A' + str(table_height)].value) in ("1", "True")
 
 
 def main() -> None:
+    series = fetch_jsons_from_api()
+    parse_jsons(series)
+def parse_jsons(series):
+    parsed_info_df = pd.DataFrame(columns=['ИНН', 'Статус', 'АдресРФ', 'ФИО_ИНН_НаимДолжности', 'Тел_Емэйл_Вебсайт'])
+
+    status = [0, 0]
+    series_list = [series]
+
+    for s, series in enumerate(series_list):
+        for i in range(series.size):
+            json_string = series[i]
+            try:
+                json_dict = get_json_dict(json_string)
+                res = 'Success'
+                status[0] += 1
+            except Exception as e:
+                print(f"ОШИБКА: {e}")
+                char_from = str(e).find('(') + 6
+                char_to = str(e).find(')')
+                char_at = int(str(e)[char_from:char_to])
+                radius = 100
+                print(
+                    f"ОШИБКА JSON ТУТ, {char_at}: {json_string[char_at - radius:char_at + radius]}_{json_string[char_at:char_at + 1]}_{json_string[char_at + 1:char_at + radius]}")
+
+                res = 'Error'
+                status[1] += 1
+            print(s, i + 1, ':', res)
+
+            if res == 'Success':
+                parsed_info_df = parse_json_into_df(json_dict, parsed_info_df)
+    print(f'\nSuccessful: {status[0]}\n Failed: {status[1]}')
+
+    parsed_info_df.to_csv('test.csv')
+
+    writer = pd.ExcelWriter('данные_юр_лица.xlsx')
+    parsed_info_df.to_excel(writer, index=False)
+    writer.save()
+    print('DataFrame is written successfully to Excel File.')
+
+
+def fetch_jsons_from_api():
     config = yaml.load(
         stream=open(
             file=os.path.join(BASE_DIR, 'config.yml'),
@@ -26,25 +66,16 @@ def main() -> None:
         ),
         Loader=yaml.Loader
     )
-    # out_inn.xlsx file
-    file_name = config['out_inn_file']['xlsx_inn_write_file']
     # out.xlsx file
     xlsx_load_file = config['out_file']['xlsx_write_file']
-
     # load inn from 'xlsx_write_file'
     companies_inn = load_inn(xlsx_load_file, only_matched_city=False)
-
     url = 'https://api.checko.ru/v2/company?key={key}&inn={inn}&active=true'
-
     workbook = openpyxl.load_workbook(xlsx_load_file)
     worksheet = workbook[SECOND_SHEET]
-
     api_keys = config['api_keys']
-    # Номер строки после последней не пустой строки
-    # table_height = get_column_height(path=xlsx_load_file, sheet_name=worksheet.title)
-    # if table_height > 2:
-    #     print(f"Вы остановились на строке: № {table_height - 1} обработка пойдет с этого места")
     table_height = 2
+    data_dict = {}
 
     # Начало цикла
     while True:
@@ -54,23 +85,32 @@ def main() -> None:
 
         if table_height > len(companies_inn):
             print(f'{table_height} row: OK')
-            return
+            save_series(data_dict)
+            return series
         if not need_to_find_inn(table_height, worksheet):
             print(f"{table_height}: ИНН '{inn}' не помечен на дальнейший отбор. Проверяю далее")
             table_height += 1
             continue
         print(f"{table_height}: ИНН '{inn}' помечен на дальнейший отбор. Запрашиваю данные")
 
-        successful, table_height = try_getting_data(api_keys, attempts, file_name, inn, successful, table_height, url,
-                                                    workbook)
+        successful, table_height = try_getting_data(api_keys, attempts, inn, successful, table_height, url, series)
 
         if not successful:
             print(f'{table_height}: Ignore company with the INN: "{inn}".'
                   f' Data from api is corrupted or All keys were used!')
             table_height += 1
+            continue
+
+        if table_height % 100 == 0:
+            save_series(data_dict)
 
 
-def try_getting_data(api_keys, attempts, file_name, inn, successful, table_height, url, workbook):
+def save_series(data_dict):
+    s = pd.Series(data_dict)
+    s.to_csv(BUFFER_PATH)
+
+
+def try_getting_data(api_keys, attempts, inn, successful, table_height, url, series):
     while attempts <= len(api_keys):
         key = api_keys[0 + attempts]
 
@@ -80,17 +120,20 @@ def try_getting_data(api_keys, attempts, file_name, inn, successful, table_heigh
 
         if not err:
             successful = True
-            table_height = write_data(api_keys, data, file_name, inn, key, successful, table_height,
-                                      workbook)
+            table_height = write_data(api_keys, data, inn, key, successful, table_height, series=series)
             break
         else:
             print(f'{table_height} (Attempt #{attempts}) with key: "{key}" - Fail')
     return successful, table_height
 
 
-def write_data(api_keys, data, file_name, inn, key, table_height, workbook):
+def need_to_find_inn(table_height: int, ws):
+    return str(ws['A' + str(table_height)].value) in ("1", "True")
+
+
+def write_data(api_keys, data, inn, key, table_height, series):
     print(f'{table_height + 1}: successful request to api with key: "{key}, inn: "{inn}"!')
-    cur_key_valid = write_json(BASE_DIR, file_name, data, inn, table_height, workbook)
+    cur_key_valid = append_json_to_series(data, series)
     table_height += 1
     validate_key(api_keys, cur_key_valid)
     return table_height
@@ -124,7 +167,7 @@ def get_column_height(path, sheet_name):
         return 2
 
 
-def write_json(data: dict, series) -> bool:
+def append_json_to_series(data: dict, series) -> bool:
     data_str = json.dumps(data)
     series.append(data_str)
 
@@ -145,6 +188,83 @@ def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
         if company_inn not in ['0', None, 'None']:
             companies_inn.append(company_inn)
     return companies_inn
+
+
+def get_json_dict(json_string):
+    assert type(json_string) == str
+    json_string = json_string.replace('\"', '').replace('None', '\'None\''). \
+        replace('False', '\'ЛОЖЬ\'').replace('True', '\'ПРАВДА\'').replace('\'', '\"'). \
+        replace('\xa0', ' ')
+    json_string = json_string
+    return json.loads(json_string)
+
+
+def get_inn(json_dict):
+    if json_dict['ИНН']:
+        return json_dict['ИНН']
+
+
+def get_name(json_dict):
+    # print(json_dict)
+    if json_dict['Статус']:
+        return json_dict['Статус']['Наим']
+
+
+def get_adress(json_dict):
+    # print(json_dict)
+    if json_dict['ЮрАдрес']:
+        return json_dict['ЮрАдрес']['АдресРФ']
+
+
+def get_person_info(json_dict):
+    # print(json_dict)
+    heads = ""
+    if json_dict['Руковод']:
+        for person in json_dict['Руковод']:
+            data = f"{person['ФИО']};{person['ИНН']};{person['НаимДолжн']}\n"
+            heads += data
+    return heads
+
+
+def get_contacts(json_dict):
+    def get_contacts_field_data(contacts, field):
+        field_data_result = ''
+        field_data = contacts[field]
+        if field_data and field_data != 'None':
+            if type(field_data) == list:
+                for info in contacts[field]:
+                    field_data_result += f"{info} ; "
+            else:
+                field_data_result += f"{field_data} ; "
+        return field_data_result
+
+    # print(json_dict)
+    contacts = json_dict['Контакты']
+    data = ''
+    if contacts:
+        data += get_contacts_field_data(contacts, 'Тел')
+        data += get_contacts_field_data(contacts, 'Емэйл')
+        data += get_contacts_field_data(contacts, 'ВебСайт')
+    return data
+
+
+def parse_json_into_df(json_dict, df):
+    # name_path = ['Статус', 'Наим']
+    # adress_path = ['ЮрАдрес','АдресРФ']
+    # person_info_path = [['Руковод', 'ФИО'], ['Руковод', 'ИНН'], ['Руковод', 'НаимДолжности']]
+    # contacts_path = [['Контакты', 'Тел'], ['Контакты','Емэйл'], ['Контакты','ВебСайт']]
+    json_dict = json_dict['data']
+    print(f"ЛОГ:  {json_dict}")
+    if json_dict:
+        row = {}
+        row['ИНН'] = get_inn(json_dict)
+        row['Статус'] = get_name(json_dict)
+        row['АдресРФ'] = get_adress(json_dict)
+        row['ФИО_ИНН_НаимДолжности'] = get_person_info(json_dict)
+        row['Тел_Емэйл_Вебсайт'] = get_contacts(json_dict)
+        print(f"ДАННЫЕ: {row}")
+        df = df.append(row, ignore_index=True)
+    return df
 
 
 if __name__ == '__main__':
