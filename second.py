@@ -14,11 +14,11 @@ SECOND_SHEET = "Все Данные с API"
 MAX_REQUEST_PER_KEY = 99
 
 
-
-
 def main() -> None:
     series = fetch_jsons_from_api()
     parse_jsons(series)
+
+
 def parse_jsons(series):
     parsed_info_df = pd.DataFrame(columns=['ИНН', 'Статус', 'АдресРФ', 'ФИО_ИНН_НаимДолжности', 'Тел_Емэйл_Вебсайт'])
 
@@ -39,7 +39,8 @@ def parse_jsons(series):
                 char_at = int(str(e)[char_from:char_to])
                 radius = 100
                 print(
-                    f"ОШИБКА JSON ТУТ, {char_at}: {json_string[char_at - radius:char_at + radius]}_{json_string[char_at:char_at + 1]}_{json_string[char_at + 1:char_at + radius]}")
+                    f"ОШИБКА JSON ТУТ, {char_at}: {json_string[char_at - radius:char_at + radius]}_"
+                    f"{json_string[char_at:char_at + 1]}_{json_string[char_at + 1:char_at + radius]}")
 
                 res = 'Error'
                 status[1] += 1
@@ -75,7 +76,7 @@ def fetch_jsons_from_api():
     worksheet = workbook[SECOND_SHEET]
     api_keys = config['api_keys']
     table_height = 2
-    data_dict = {}
+    data_list = []
 
     # Начало цикла
     while True:
@@ -85,7 +86,7 @@ def fetch_jsons_from_api():
 
         if table_height > len(companies_inn):
             print(f'{table_height} row: OK')
-            save_series(data_dict)
+            series = save_series(data_list)
             return series
         if not need_to_find_inn(table_height, worksheet):
             print(f"{table_height}: ИНН '{inn}' не помечен на дальнейший отбор. Проверяю далее")
@@ -93,7 +94,7 @@ def fetch_jsons_from_api():
             continue
         print(f"{table_height}: ИНН '{inn}' помечен на дальнейший отбор. Запрашиваю данные")
 
-        successful, table_height = try_getting_data(api_keys, attempts, inn, successful, table_height, url, series)
+        successful, table_height = try_getting_data(api_keys, attempts, inn, successful, table_height, url, data_list)
 
         if not successful:
             print(f'{table_height}: Ignore company with the INN: "{inn}".'
@@ -102,25 +103,26 @@ def fetch_jsons_from_api():
             continue
 
         if table_height % 100 == 0:
-            save_series(data_dict)
+            save_series(data_list)
 
 
 def save_series(data_dict):
     s = pd.Series(data_dict)
-    s.to_csv(BUFFER_PATH)
+    s.to_csv(BUFFER_PATH, index=False, header=False)
+    return s
 
 
-def try_getting_data(api_keys, attempts, inn, successful, table_height, url, series):
+def try_getting_data(api_keys, attempts, inn, successful, table_height, url, data_list):
     while attempts <= len(api_keys):
         key = api_keys[0 + attempts]
 
-        print(f'{table_height + 1}: request to api with key: "{key}", inn: "{inn}"')
+        print(f'{table_height}: request to api with key: "{key}", inn: "{inn}"')
         data, err = request_to_api(url, key, inn)
         attempts += 1
 
         if not err:
             successful = True
-            table_height = write_data(api_keys, data, inn, key, successful, table_height, series=series)
+            table_height = write_data(api_keys, data, inn, key, table_height, data_list)
             break
         else:
             print(f'{table_height} (Attempt #{attempts}) with key: "{key}" - Fail')
@@ -131,9 +133,9 @@ def need_to_find_inn(table_height: int, ws):
     return str(ws['A' + str(table_height)].value) in ("1", "True")
 
 
-def write_data(api_keys, data, inn, key, table_height, series):
+def write_data(api_keys, data, inn, key, table_height, data_list):
     print(f'{table_height + 1}: successful request to api with key: "{key}, inn: "{inn}"!')
-    cur_key_valid = append_json_to_series(data, series)
+    cur_key_valid = append_json_to_list(data, data_list)
     table_height += 1
     validate_key(api_keys, cur_key_valid)
     return table_height
@@ -145,7 +147,7 @@ def validate_key(api_keys, cur_key_valid):
         api_keys.pop(0)
 
 
-def request_to_api(url: str, key: str, inn: str) -> tuple[list[dict], bool]:
+def request_to_api(url: str, key: str, inn: str) -> tuple[dict, bool]:
     response = requests.get(
         url=url.format(key=key, inn=inn),
     )
@@ -167,11 +169,10 @@ def get_column_height(path, sheet_name):
         return 2
 
 
-def append_json_to_series(data: dict, series) -> bool:
+def append_json_to_list(data: dict, data_list: list) -> bool:
     data_str = json.dumps(data)
-    series.append(data_str)
-
-    return series
+    data_list.append(data_str)
+    return data['meta']['today_request_count'] < MAX_REQUEST_PER_KEY
 
 
 def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
@@ -191,12 +192,25 @@ def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
 
 
 def get_json_dict(json_string):
-    assert type(json_string) == str
-    json_string = json_string.replace('\"', '').replace('None', '\'None\''). \
-        replace('False', '\'ЛОЖЬ\'').replace('True', '\'ПРАВДА\'').replace('\'', '\"'). \
-        replace('\xa0', ' ')
-    json_string = json_string
+    assert type(json_string) == str, f"type: {type(json_string)}"
+    # json_string = json_string.replace('\"', '').replace('None', '\'None\''). \
+    #     replace('False', '\'ЛОЖЬ\'').replace('True', '\'ПРАВДА\'').replace('\'', '\"'). \
+    #     replace('\xa0', ' ')
     return json.loads(json_string)
+
+
+def get_field_data(nested_data, field):
+    field_data_result = ''
+    field_data = nested_data[field]
+    if not field_data or field_data == 'None':
+        return ''
+
+    if type(field_data) == list:
+        for info in nested_data[field]:
+            field_data_result += f"{info} ; "
+    else:
+        field_data_result += f"{field_data} ; "
+    return field_data_result
 
 
 def get_inn(json_dict):
@@ -227,24 +241,13 @@ def get_person_info(json_dict):
 
 
 def get_contacts(json_dict):
-    def get_contacts_field_data(contacts, field):
-        field_data_result = ''
-        field_data = contacts[field]
-        if field_data and field_data != 'None':
-            if type(field_data) == list:
-                for info in contacts[field]:
-                    field_data_result += f"{info} ; "
-            else:
-                field_data_result += f"{field_data} ; "
-        return field_data_result
-
     # print(json_dict)
     contacts = json_dict['Контакты']
     data = ''
     if contacts:
-        data += get_contacts_field_data(contacts, 'Тел')
-        data += get_contacts_field_data(contacts, 'Емэйл')
-        data += get_contacts_field_data(contacts, 'ВебСайт')
+        data += get_field_data(contacts, 'Тел')
+        data += get_field_data(contacts, 'Емэйл')
+        data += get_field_data(contacts, 'ВебСайт')
     return data
 
 
@@ -254,16 +257,13 @@ def parse_json_into_df(json_dict, df):
     # person_info_path = [['Руковод', 'ФИО'], ['Руковод', 'ИНН'], ['Руковод', 'НаимДолжности']]
     # contacts_path = [['Контакты', 'Тел'], ['Контакты','Емэйл'], ['Контакты','ВебСайт']]
     json_dict = json_dict['data']
-    print(f"ЛОГ:  {json_dict}")
+    # print(f"ЛОГ:  {json_dict}")
     if json_dict:
-        row = {}
-        row['ИНН'] = get_inn(json_dict)
-        row['Статус'] = get_name(json_dict)
-        row['АдресРФ'] = get_adress(json_dict)
-        row['ФИО_ИНН_НаимДолжности'] = get_person_info(json_dict)
-        row['Тел_Емэйл_Вебсайт'] = get_contacts(json_dict)
+        row = {'ИНН': get_inn(json_dict), 'Статус': get_name(json_dict), 'АдресРФ': get_adress(json_dict),
+               'ФИО_ИНН_НаимДолжности': get_person_info(json_dict), 'Тел_Емэйл_Вебсайт': get_contacts(json_dict)}
         print(f"ДАННЫЕ: {row}")
-        df = df.append(row, ignore_index=True)
+
+        df = pd.concat([df, pd.DataFrame(row, index=[0])], ignore_index=True)
     return df
 
 
