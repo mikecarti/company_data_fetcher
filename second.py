@@ -20,7 +20,7 @@ def main() -> None:
 
 
 def parse_jsons(series):
-    parsed_info_df = pd.DataFrame(columns=['ИНН', 'Статус', 'АдресРФ', 'ФИО_ИНН_НаимДолжности', 'Тел_Емэйл_Вебсайт'])
+    parsed_info_df = pd.DataFrame()
 
     status = [0, 0]
     series_list = [series]
@@ -108,7 +108,8 @@ def fetch_jsons_from_api():
 
 def save_series(data_dict):
     s = pd.Series(data_dict)
-    s.to_csv(BUFFER_PATH, index=False, header=False)
+    s_decoded = s.apply(lambda x: json.loads(x))
+    s_decoded.to_csv(BUFFER_PATH, index=False, header=False)
     return s
 
 
@@ -232,35 +233,109 @@ def get_adress(json_dict):
 
 def get_person_info(json_dict):
     # print(json_dict)
+    if not json_dict['Руковод']:
+        return ''
+
     heads = ""
-    if json_dict['Руковод']:
-        for person in json_dict['Руковод']:
-            data = f"{person['ФИО']};{person['ИНН']};{person['НаимДолжн']}\n"
-            heads += data
+    for person in json_dict['Руковод']:
+        heads += f"{person['ФИО']} ; {person['ИНН']} ; {person['НаимДолжн']}\n"
     return heads
 
 
-def get_contacts(json_dict):
-    # print(json_dict)
-    contacts = json_dict['Контакты']
+def collect_data(data_dict, on_fields: list):
+    if not data_dict:
+        return ''
+
     data = ''
-    if contacts:
-        data += get_field_data(contacts, 'Тел')
-        data += get_field_data(contacts, 'Емэйл')
-        data += get_field_data(contacts, 'ВебСайт')
+    for field in on_fields:
+        data += get_field_data(data_dict, field)
     return data
 
 
+def get_uchred_fl(json_dict):
+    if not json_dict['Учред'] or not json_dict['Учред']['ФЛ']:
+        return
+
+    individual_list = json_dict['Учред']['ФЛ']
+    data = ''
+    for person in individual_list:
+        data += person['ФИО'] + ' ; '
+        data += person['ИНН'] + ' ; '
+        if person['Доля']:
+            data += str(round(person['Доля']['Процент'], 3) )
+        data += ' \n'
+    return data
+
+
+def get_russian_individuals(json_dict):
+    if not json_dict['Учред'] and not json_dict['Учред']['РосОрг']:
+        return
+
+    russian_individuals = json_dict['Учред']['РосОрг']
+    data = ''
+    for person in russian_individuals:
+        data += person['ИНН'] + ' ; '
+        data += person['НаимПолн'] + ' ; '
+        if person['Доля']:
+            data += str(round(person['Доля']['Процент'], 3))
+        data += ' \n'
+    return data
+
+
+def get_connected_individuals(json_dict):
+    connected_individuals = json_dict['СвязУпрОрг']
+    data = ''
+    for person in connected_individuals:
+        data += f"{person['НаимСокр']} ; {person['ИНН']}\n"
+    return data
+
+
+def get_subsidiary_num(json_dict):
+    if not json_dict['Подразд']:
+        return 0
+
+    subsidiaries = json_dict['Подразд']['Филиал']
+    return len(subsidiaries)
+
+
+def get_representatives_num(json_dict):
+    if not json_dict['Подразд']:
+        return 0
+
+    representatives = json_dict['Подразд']['Представ']
+    return len(representatives)
+
+
 def parse_json_into_df(json_dict, df):
-    # name_path = ['Статус', 'Наим']
-    # adress_path = ['ЮрАдрес','АдресРФ']
-    # person_info_path = [['Руковод', 'ФИО'], ['Руковод', 'ИНН'], ['Руковод', 'НаимДолжности']]
-    # contacts_path = [['Контакты', 'Тел'], ['Контакты','Емэйл'], ['Контакты','ВебСайт']]
+    # 1. +++Статус:Наим+++
+    # 2. +++ЮрАдрес:АдресРФ+++
+    # 3. +++УпрОрг:ИНН; УпрОрг:НаимПолн+++
+    # 4. +++Руковод:ФИО;Руковод:ИНН;Руковод:НаимДолжности+++
+    # 5. +++[Учред:ФЛ:ФИО ; Учред:ФЛ:ИНН ; Учред:ФЛ:Доля:Процент]+++
+    # 6. +++[Учред:РосОрг:ИНН ; Учред:РосОрг:НаимПолн и Учред:РосОрг:Доля:Процент]+++
+    # 7. +++[СвязУпрОрг:НаимСокр; СвязУпрОрг:ИНН]+++
+    # 8. +++Подразд:Филиал - количество записей+++
+    # 9. +++Подразд:Представ - количество записей+++
+    # 10. +++СЧР+++
+    # 11. +++Контакты:Тел; Контакты:Емэйл; Контакты:ВебСайт+++
+
     json_dict = json_dict['data']
     # print(f"ЛОГ:  {json_dict}")
     if json_dict:
-        row = {'ИНН': get_inn(json_dict), 'Статус': get_name(json_dict), 'АдресРФ': get_adress(json_dict),
-               'ФИО_ИНН_НаимДолжности': get_person_info(json_dict), 'Тел_Емэйл_Вебсайт': get_contacts(json_dict)}
+        row = {
+            'ИНН': get_inn(json_dict),
+            'Статус': get_name(json_dict),
+            'АдресРФ': get_adress(json_dict),
+            'УпрОрг': collect_data(json_dict['УпрОрг'], on_fields=['ИНН', 'НаимПолн']),
+            'Руковод (ФИО_ИНН_НаимДолжности)': get_person_info(json_dict),
+            'Учред ФЛ (ФИО_ИНН_Процент)': get_uchred_fl(json_dict),
+            'Учред (ИНН_НаимПолн_Процент)': get_russian_individuals(json_dict),
+            'СвязУпрОрг': get_connected_individuals(json_dict),
+            'Кол-во Филиалов': get_subsidiary_num(json_dict) ,
+            'Кол-во Представителей': get_representatives_num(json_dict),
+            'СЧР': json_dict['СЧР'],
+            'Тел_Емэйл_Вебсайт': collect_data(json_dict['Контакты'], on_fields=['Тел', 'Емэйл', 'ВебСайт'])
+        }
         print(f"ДАННЫЕ: {row}")
 
         df = pd.concat([df, pd.DataFrame(row, index=[0])], ignore_index=True)
