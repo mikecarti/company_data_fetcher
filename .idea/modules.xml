@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$USER_HOME$/Downloads/.idea/Downloads.iml" filepath="$USER_HOME$/Downloads/.idea/Downloads.iml" />
+      <module fileurl="file://$USER_HOME$/DataspellProjects/Leveling Up/.idea/Leveling Up.iml" filepath="$USER_HOME$/DataspellProjects/Leveling Up/.idea/Leveling Up.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../.idea/Python Scripts.iml" filepath="$PROJECT_DIR$/../../.idea/Python Scripts.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/checko2.iml" filepath="$PROJECT_DIR$/.idea/checko2.iml" />
+    </modules>
+  </component>
+</project>

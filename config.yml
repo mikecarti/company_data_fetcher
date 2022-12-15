@@ -38,10 +38,6 @@ col_names:
     search_col_name: "Название Для Поиска"
 
 api_keys: 
-  - "STFOy3IRjJtr1f6e"
-  - "C1PcGrZ8emk132U6"
-  - "zlke2t67zz5pdjtA"
-  - "KpAn7TIegaDcBbOM"
   - "zr0twtRIPc87Jx1P"
   - "1CUvaDURDE5IjWz5"
   - "1lCI9OMxgoK3C3cc"
@@ -53,6 +49,10 @@ api_keys:
   - "1CEIl0crWoTxxKzC"
   - "KpOF72aqQIXcWFtT"
   - "2tmL8PDqHekwJen2"
+  - "STFOy3IRjJtr1f6e"
+  - "C1PcGrZ8emk132U6"
+  - "zlke2t67zz5pdjtA"
+  - "KpAn7TIegaDcBbOM"
 
 
 
