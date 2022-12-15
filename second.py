@@ -30,12 +30,7 @@ def main() -> None:
     file_name = config['out_inn_file']['xlsx_inn_write_file']
     # out.xlsx file
     xlsx_load_file = config['out_file']['xlsx_write_file']
-    # create out_inn.xlsx file
-    make_xlsx_out_file(
-        base_dir=BASE_DIR,
-        file_name=file_name,
-        fields=config['out_inn_file']['fields'].values()
-    )
+
     # load inn from 'xlsx_write_file'
     companies_inn = load_inn(xlsx_load_file, only_matched_city=False)
 
@@ -53,44 +48,58 @@ def main() -> None:
 
     # Начало цикла
     while True:
+        inn = companies_inn[table_height - 2]
+        attempts = 0
+        successful = False
+
         if table_height > len(companies_inn):
             print(f'{table_height} row: OK')
             return
-        inn = companies_inn[table_height - 2]
-
         if not need_to_find_inn(table_height, worksheet):
             print(f"{table_height}: ИНН '{inn}' не помечен на дальнейший отбор. Проверяю далее")
             table_height += 1
             continue
-
         print(f"{table_height}: ИНН '{inn}' помечен на дальнейший отбор. Запрашиваю данные")
 
-        attempts = 0
-        successful = False
-
-        while attempts <= len(api_keys):
-            key = api_keys[0 + attempts]
-
-            print(f'{table_height + 1}: request to api with key: "{key}", inn: "{inn}"')
-            data, err = request_to_api(url, key, inn)
-            attempts += 1
-
-            if not err:
-                print(f'{table_height + 1}: successful request to api with key: "{key}, inn: "{inn}"!')
-                cur_key_valid = write_json(BASE_DIR, file_name, data, inn, table_height, workbook)
-                table_height += 1
-                successful = True
-                if not cur_key_valid:
-                    print(f"Key {api_keys[0]} is fully used and deleted from stack.")
-                    api_keys.pop(0)
-                break
-            else:
-                print(f'{table_height} (Attempt #{attempts}) with key: "{key}" - Fail')
+        successful, table_height = try_getting_data(api_keys, attempts, file_name, inn, successful, table_height, url,
+                                                    workbook)
 
         if not successful:
             print(f'{table_height}: Ignore company with the INN: "{inn}".'
                   f' Data from api is corrupted or All keys were used!')
             table_height += 1
+
+
+def try_getting_data(api_keys, attempts, file_name, inn, successful, table_height, url, workbook):
+    while attempts <= len(api_keys):
+        key = api_keys[0 + attempts]
+
+        print(f'{table_height + 1}: request to api with key: "{key}", inn: "{inn}"')
+        data, err = request_to_api(url, key, inn)
+        attempts += 1
+
+        if not err:
+            successful = True
+            table_height = write_data(api_keys, data, file_name, inn, key, successful, table_height,
+                                      workbook)
+            break
+        else:
+            print(f'{table_height} (Attempt #{attempts}) with key: "{key}" - Fail')
+    return successful, table_height
+
+
+def write_data(api_keys, data, file_name, inn, key, table_height, workbook):
+    print(f'{table_height + 1}: successful request to api with key: "{key}, inn: "{inn}"!')
+    cur_key_valid = write_json(BASE_DIR, file_name, data, inn, table_height, workbook)
+    table_height += 1
+    validate_key(api_keys, cur_key_valid)
+    return table_height
+
+
+def validate_key(api_keys, cur_key_valid):
+    if not cur_key_valid:
+        print(f"Key {api_keys[0]} is fully used and deleted from stack.")
+        api_keys.pop(0)
 
 
 def request_to_api(url: str, key: str, inn: str) -> tuple[list[dict], bool]:
@@ -115,113 +124,11 @@ def get_column_height(path, sheet_name):
         return 2
 
 
-def write_json(base_dir: str, file_name: str, data: dict, inn: str, table_height: str,
-               workbook: openpyxl.workbook.workbook) -> bool:
-    xlsx_write_file = os.path.join(base_dir, file_name)
-    # workbook = openpyxl.load_workbook(xlsx_write_file)
-    worksheet = workbook[SECOND_SHEET]
+def write_json(data: dict, series) -> bool:
+    data_str = json.dumps(data)
+    series.append(data_str)
 
-    worksheet['P' + str(table_height)].value = str(data)
-
-    workbook.save(xlsx_write_file)
-    workbook.close()
-
-    return data['meta']['today_request_count'] < MAX_REQUEST_PER_KEY
-
-
-def write_data_to_xlsx(base_dir: str, file_name: str, data: dict, inn: str, table_height: str) -> bool:
-    xlsx_write_file = os.path.join(base_dir, file_name)
-    workbook = openpyxl.load_workbook(xlsx_write_file)
-    worksheet = workbook[SECOND_SHEET]
-
-    try:
-        row = data['data']
-        managing_organization = row['УпрОрг']
-    except Exception as e:
-        print(f"{table_height}: Не вышло получить данные из запроса с ИНН '{inn}': {e}")
-        return
-
-    letters = ('O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z')
-
-    if managing_organization:
-        # worksheet['O' + str(table_height)].value = managing_organization['ИНН']
-        worksheet['P' + str(table_height)].value = managing_organization['НаимПолн']
-
-    auth_capital_amount = row['УстКап']
-    if auth_capital_amount:
-        worksheet['R' + str(table_height)].value = auth_capital_amount['Сумма']
-
-    ceo = row['Руковод']
-    if ceo:
-        ceos = ''
-        for item in ceo:
-            ceos += f"{item['ФИО']}:{item['НаимДолжн']};"
-        worksheet['S' + str(table_height)].value = ceos
-
-    contacts = row['Контакты']
-    if contacts:
-        phone_numbers = ''
-        if contacts['Тел']:
-            for phone in contacts['Тел']:
-                phone_numbers += phone + ';'
-        worksheet['T' + str(table_height)].value = phone_numbers
-
-        email_addresses = ''
-        if contacts['Емэйл']:
-            for email in contacts['Емэйл']:
-                email_addresses += email + ';'
-        worksheet['U' + str(table_height)].value = email_addresses
-
-        websites = ''
-        if contacts['ВебСайт']:
-            for website in contacts['ВебСайт']:
-                websites += website + ';'
-        worksheet['V' + str(table_height)].value = websites
-
-    worksheet['W' + str(table_height)].value = row['СЧР']
-
-    worksheet['X' + str(table_height)].value = data['meta']['today_request_count']
-
-    workbook.save(xlsx_write_file)
-    workbook.close()
-
-    return data['meta']['today_request_count'] < MAX_REQUEST_PER_KEY
-
-
-def make_xlsx_out_file(
-        base_dir: str,
-        file_name: str,
-        fields: list[str]
-) -> None:
-    """ Create xlsx file to write response data.
-
-    :arg:
-        base_dir: dir from this module.
-        file_name: xlsx file name.
-        fields: header fields to fill in xlsx file.
-    """
-    file_path = os.path.join(base_dir, file_name)
-    workbook = openpyxl.load_workbook(file_path)
-    worksheet = workbook[SECOND_SHEET]
-
-    if os.path.exists(file_path):
-        print(f'Cannot create file: {file_path}, file already exists')
-        letters = ('O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z')
-        for field, letter in zip(fields, letters):
-            worksheet[letter + '1'].value = field
-        workbook.save(file_name)
-        workbook.close()
-        print(f'Create table names for {file_path}: OK')
-    else:
-        print("Error: " + file_name + " must exist.")
-        raise NoFileException(Exception)
-
-    # letters = ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K')
-    # for field, letter in zip(fields, letters):
-    #     worksheet[letter + '1'].value = field
-    # workbook.save(file_name)
-    # workbook.close()
-    # print(f'Create {file_path}: OK')
+    return series
 
 
 def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
@@ -238,10 +145,6 @@ def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
         if company_inn not in ['0', None, 'None']:
             companies_inn.append(company_inn)
     return companies_inn
-
-
-class NoFileException(Exception):
-    pass
 
 
 if __name__ == '__main__':
