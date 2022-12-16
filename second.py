@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import time
 
 import requests
 import openpyxl
@@ -9,21 +10,58 @@ import pandas as pd
 import first
 
 BASE_DIR = os.path.normpath(os.getcwd())
+JSONS_PATH = os.path.join(BASE_DIR, 'jsons/')
 BUFFER_PATH = 'buffer.csv'
 SECOND_SHEET = "Все Данные с API"
+BAD_JSONS = False
 MAX_REQUEST_PER_KEY = 99
+API_MAX_ATTEMPTS = 2
 
 
 def main() -> None:
-    series = fetch_jsons_from_api()
-    parse_jsons(series)
+    user_input = 0.00001
+    variants = ('0', '1', '2', '3')
+
+    print("""
+    -Выберите режим
+    1. Получить и распарсить данные по файлу Excel с инн
+    2. Получить json'ы по файлу Excel с инн
+    3. Распарсить данные из json'ов
+    0. Отменить
+    """)
+
+    while user_input not in variants:
+        user_input = input()
+        if user_input not in variants:
+            print("Неверный ввод, введите цифру от 0 до 3")
+
+    match user_input:
+        case '1':
+            series = fetch_jsons_from_api()
+            parse_jsons(series)
+        case '2':
+            fetch_jsons_from_api()
+        case '3':
+            series_list = []
+            for filename in os.listdir(JSONS_PATH):
+                file_path = JSONS_PATH + filename
+                if os.path.isfile(file_path):
+                    series = pd.read_csv(file_path, sep='-=-=_+_=-=-=-+_+_', header=None, squeeze=True)
+                    series_list.append(series)
+
+            parse_jsons(series_list)
+        case '0':
+            return
+        case _:
+            raise ValueError("Ввод пользователя получил неверный аргумент")
 
 
-def parse_jsons(series):
+def parse_jsons(series_list):
     parsed_info_df = pd.DataFrame()
 
     status = [0, 0]
-    series_list = [series]
+    if len(series_list) == 1:
+        series_list = [series_list]
 
     for s, series in enumerate(series_list):
         for i in range(series.size):
@@ -81,7 +119,6 @@ def fetch_jsons_from_api():
     # Начало цикла
     while True:
         inn = companies_inn[table_height - 2]
-        attempts = 0
         successful = False
 
         if table_height > len(companies_inn):
@@ -94,7 +131,7 @@ def fetch_jsons_from_api():
             continue
         print(f"{table_height}: ИНН '{inn}' помечен на дальнейший отбор. Запрашиваю данные")
 
-        successful, table_height = try_getting_data(api_keys, attempts, inn, successful, table_height, url, data_list)
+        successful, table_height = try_getting_data(api_keys, inn, successful, table_height, url, data_list)
 
         if not successful:
             print(f'{table_height}: Ignore company with the INN: "{inn}".'
@@ -109,12 +146,14 @@ def fetch_jsons_from_api():
 def save_series(data_dict):
     s = pd.Series(data_dict)
     s_decoded = s.apply(lambda x: json.loads(x))
-    s_decoded.to_csv(BUFFER_PATH, index=False, header=False)
+    s.to_csv(BUFFER_PATH + '_encoded', index=False)
+    s_decoded.to_csv(BUFFER_PATH, index=False)
     return s
 
 
-def try_getting_data(api_keys, attempts, inn, successful, table_height, url, data_list):
-    while attempts <= len(api_keys):
+def try_getting_data(api_keys, inn, successful, table_height, url, data_list):
+    attempts = 0
+    while attempts <= len(api_keys) and attempts <= API_MAX_ATTEMPTS:
         key = api_keys[0 + attempts]
 
         print(f'{table_height}: request to api with key: "{key}", inn: "{inn}"')
@@ -135,7 +174,7 @@ def need_to_find_inn(table_height: int, ws):
 
 
 def write_data(api_keys, data, inn, key, table_height, data_list):
-    print(f'{table_height + 1}: successful request to api with key: "{key}, inn: "{inn}"!')
+    print(f'{table_height}: successful request to api with key: "{key}, inn: "{inn}"!')
     cur_key_valid = append_json_to_list(data, data_list)
     table_height += 1
     validate_key(api_keys, cur_key_valid)
@@ -194,10 +233,11 @@ def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
 
 def get_json_dict(json_string):
     assert type(json_string) == str, f"type: {type(json_string)}"
-    # json_string = json_string.replace('\"', '').replace('None', '\'None\''). \
-    #     replace('False', '\'ЛОЖЬ\'').replace('True', '\'ПРАВДА\'').replace('\'', '\"'). \
-    #     replace('\xa0', ' ')
-    return json.loads(json_string)
+    if BAD_JSONS:
+        json_string = json_string.replace('\"', '').replace('None', '\'None\''). \
+            replace('False', '\'ЛОЖЬ\'').replace('True', '\'ПРАВДА\'').replace('\'', '\"'). \
+            replace('\xa0', ' ')
+    return json.loads(json_string) 
 
 
 def get_field_data(nested_data, field):
@@ -262,7 +302,7 @@ def get_uchred_fl(json_dict):
         data += person['ФИО'] + ' ; '
         data += person['ИНН'] + ' ; '
         if person['Доля']:
-            data += str(round(person['Доля']['Процент'], 3) )
+            data += process_percent(person)
         data += ' \n'
     return data
 
@@ -277,9 +317,18 @@ def get_russian_individuals(json_dict):
         data += person['ИНН'] + ' ; '
         data += person['НаимПолн'] + ' ; '
         if person['Доля']:
-            data += str(round(person['Доля']['Процент'], 3))
+            data += process_percent(person)
         data += ' \n'
     return data
+
+
+def process_percent(person):
+    percent_str = person['Доля']['Процент']
+    if percent_str == 'None':
+        return 'Нет Данных'
+    else:
+        percent = float(percent_str)
+        return str(round(percent, 3))
 
 
 def get_connected_individuals(json_dict):
@@ -331,7 +380,7 @@ def parse_json_into_df(json_dict, df):
             'Учред ФЛ (ФИО_ИНН_Процент)': get_uchred_fl(json_dict),
             'Учред (ИНН_НаимПолн_Процент)': get_russian_individuals(json_dict),
             'СвязУпрОрг': get_connected_individuals(json_dict),
-            'Кол-во Филиалов': get_subsidiary_num(json_dict) ,
+            'Кол-во Филиалов': get_subsidiary_num(json_dict),
             'Кол-во Представителей': get_representatives_num(json_dict),
             'СЧР': json_dict['СЧР'],
             'Тел_Емэйл_Вебсайт': collect_data(json_dict['Контакты'], on_fields=['Тел', 'Емэйл', 'ВебСайт'])
