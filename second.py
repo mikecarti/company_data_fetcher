@@ -42,13 +42,7 @@ def main() -> None:
         case '2':
             fetch_jsons_from_api()
         case '3':
-            series_list = []
-            for filename in os.listdir(JSONS_PATH):
-                file_path = JSONS_PATH + filename
-                if os.path.isfile(file_path):
-                    series = pd.read_csv(file_path, sep='-=-=_+_=-=-=-+_+_', header=None, squeeze=True)
-                    series_list.append(series)
-
+            series_list = collect_text_files_into_series()
             parse_jsons(series_list)
         case '0':
             return
@@ -56,11 +50,21 @@ def main() -> None:
             raise ValueError("Ввод пользователя получил неверный аргумент")
 
 
+def collect_text_files_into_series():
+    series_list = []
+    for filename in os.listdir(JSONS_PATH):
+        file_path = JSONS_PATH + filename
+        if os.path.isfile(file_path):
+            series = pd.read_csv(file_path, sep='-=-=_+_=-=-=-+_+_', header=None, squeeze=True)
+            series_list.append(series)
+    return series_list
+
+
 def parse_jsons(series_list):
     parsed_info_df = pd.DataFrame()
 
     status = [0, 0]
-    if len(series_list) == 1:
+    if type(series_list) != list:
         series_list = [series_list]
 
     for s, series in enumerate(series_list):
@@ -107,7 +111,7 @@ def fetch_jsons_from_api():
     )
     # out.xlsx file
     xlsx_load_file = config['out_file']['xlsx_write_file']
-    # load inn from 'xlsx_write_file'
+    # load inn from 'xlsx_write_file' (неверное кол-во, на один меньше)
     companies_inn = load_inn(xlsx_load_file, only_matched_city=False)
     url = 'https://api.checko.ru/v2/company?key={key}&inn={inn}&active=true'
     workbook = openpyxl.load_workbook(xlsx_load_file)
@@ -118,13 +122,15 @@ def fetch_jsons_from_api():
 
     # Начало цикла
     while True:
-        inn = companies_inn[table_height - 2]
-        successful = False
-
-        if table_height > len(companies_inn):
+        if table_height - 1 > len(companies_inn):
             print(f'{table_height} row: OK')
             series = save_series(data_list)
             return series
+
+        inn = companies_inn[table_height - 2]
+        successful = False
+
+        # -1 because of header in excel file
         if not need_to_find_inn(table_height, worksheet):
             print(f"{table_height}: ИНН '{inn}' не помечен на дальнейший отбор. Проверяю далее")
             table_height += 1
@@ -135,7 +141,7 @@ def fetch_jsons_from_api():
 
         if not successful:
             print(f'{table_height}: Ignore company with the INN: "{inn}".'
-                  f' Data from api is corrupted or All keys were used!')
+                  f' Data from api is corrupted!')
             table_height += 1
             continue
 
@@ -220,7 +226,7 @@ def load_inn(xlsx_path: str, only_matched_city=False) -> list[str]:
     workbook = openpyxl.load_workbook(xlsx_path)
     worksheet = workbook[SECOND_SHEET]
     table_height = first.get_table_height(xlsx_path, worksheet.title)
-    for i in range(2, table_height):
+    for i in range(2, table_height + 1):
         if only_matched_city:
             if str(worksheet['B' + str(i)].value).lower() in ("false", "0", "нет"):
                 continue
@@ -237,7 +243,7 @@ def get_json_dict(json_string):
         json_string = json_string.replace('\"', '').replace('None', '\'None\''). \
             replace('False', '\'ЛОЖЬ\'').replace('True', '\'ПРАВДА\'').replace('\'', '\"'). \
             replace('\xa0', ' ')
-    return json.loads(json_string) 
+    return json.loads(json_string)
 
 
 def get_field_data(nested_data, field):
@@ -323,12 +329,12 @@ def get_russian_individuals(json_dict):
 
 
 def process_percent(person):
-    percent_str = person['Доля']['Процент']
-    if percent_str == 'None':
-        return 'Нет Данных'
+    percent = person['Доля']['Процент']
+    if percent == 'None' or not percent:
+        return 'None'
     else:
-        percent = float(percent_str)
-        return str(round(percent, 3))
+        percent_f = float(percent)
+        return str(round(percent_f, 3))
 
 
 def get_connected_individuals(json_dict):
@@ -344,7 +350,7 @@ def get_subsidiary_num(json_dict):
         return 0
 
     subsidiaries = json_dict['Подразд']['Филиал']
-    return len(subsidiaries)
+    return len(subsidiaries) if len(subsidiaries) > 0 else "None"
 
 
 def get_representatives_num(json_dict):
@@ -352,7 +358,7 @@ def get_representatives_num(json_dict):
         return 0
 
     representatives = json_dict['Подразд']['Представ']
-    return len(representatives)
+    return len(representatives) if len(representatives) > 0 else "None"
 
 
 def parse_json_into_df(json_dict, df):
